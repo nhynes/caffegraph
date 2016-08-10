@@ -154,8 +154,11 @@ LayerInit(Convolution) {
 }
 
 void ConvolutionLayer::Parameterize(THFloatTensor** tensors) {
+  auto& conv_params = params.convolution_param();
   for(int i = 0; i < params.blobs_size(); ++i)
     THCopy(params.blobs(i), tensors[i]);
+  if(!conv_params.bias_term())
+    THFloatTensor_zero(tensors[1]);
 }
 
 LayerInit(Pooling) {
@@ -190,14 +193,14 @@ LayerInit(Pooling) {
 
   std::ostringstream module_os;
   module_os << "nn.Spatial" << pool_type << "Pooling(" << k[0] << ", " << k[1] << ", ";
-  module_os << d[0] << ", " << d[1] << ", " << p[0] << ", " << p[1] << ")";
+  module_os << d[0] << ", " << d[1] << ", " << p[0] << ", " << p[1] << "):ceil()";
   lua_layers.emplace_back(name, module_os.str(), inputs[0]->name);
 
   std::vector<int> input_size = inputs[0]->GetOutputSizes()[0];
   std::vector<int> output_size(input_size.size());
   output_size[0] = input_size[0];
   for(int i = 0; i < k.size(); ++i)
-    output_size[i+1] = (input_size[i+1] + 2*p[i] - k[i]) / d[i] + 1;
+    output_size[i+1] = ceil((double)(input_size[i+1] + 2*p[i] - k[i]) / d[i] + 1);
   output_sizes.push_back(output_size);
 }
 
