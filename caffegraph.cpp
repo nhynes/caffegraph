@@ -131,7 +131,7 @@ class Model {
 
 void loadModel(void** handle, const char* prototxt, const char* caffemodel) {
   int fd = open(caffemodel, O_RDONLY);
-  if(fd == 0) return;
+  if(fd < 0) return;
 
   ZeroCopyInputStream* raw_input = new FileInputStream(fd);
   CodedInputStream* coded_input = new CodedInputStream(raw_input);
@@ -151,7 +151,7 @@ void loadModel(void** handle, const char* prototxt, const char* caffemodel) {
 
   if(!has_layer_input) { // patch the prototxt input size into the caffemodel data layer
     int fd = open(prototxt, O_RDONLY);
-    if(fd == 0) return;
+    if(fd < 0) return;
 
     caffe::NetParameter* proto_params = new caffe::NetParameter();
     FileInputStream* input = new FileInputStream(fd);
