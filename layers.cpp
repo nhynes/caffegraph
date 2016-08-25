@@ -31,9 +31,10 @@ void THCopy(const caffe::BlobProto& src, THFloatTensor* dest) {
   int num_cpy = 1;
   for(int dim : blob_shape.dim()) num_cpy *= dim;
 
-  THFloatTensor_newContiguous(dest);
+  dest = THFloatTensor_newContiguous(dest);
   assert(THFloatTensor_numel(dest) == num_cpy);
   memcpy(THFloatTensor_data(dest), src.data().data(), sizeof(float)*num_cpy);
+  THFloatTensor_free(dest);
 }
 
 Layer* Layer::MakeLayer(const caffe::LayerParameter& params,
@@ -297,6 +298,7 @@ LayerInit(Scale) {
 
 void THCopyAxis(const caffe::BlobProto& src, THFloatTensor* dest,
                 std::vector<int> size, int axis) {
+  // effectively: dest:resize(size):copy(src:vecAlongDim(axis):expandAs(size))
   int ndim = size.size();
   std::vector<long int> resize(size.begin(), size.end());
   THLongStorage* szst = THLongStorage_newWithData(resize.data(), ndim);
@@ -311,13 +313,14 @@ void THCopyAxis(const caffe::BlobProto& src, THFloatTensor* dest,
   THFloatTensor* vec = THFloatTensor_newWithSize1d(src.shape().dim(0));
   THCopy(src, vec);
 
-
   THFloatStorage* vec_storage = THFloatTensor_storage(vec);
   THLongStorage* expand_stridest = THLongStorage_newWithData(expand_stride.data(), ndim);
   THFloatTensor_setStorage(vec, vec_storage, 0, szst, expand_stridest);
 
   THFloatTensor_resize(dest, szst, NULL);
   THFloatTensor_copy(dest, vec);
+
+  THFloatTensor_free(vec);
 }
 
 void ScaleLayer::Parameterize(THFloatTensor** tensors) {
