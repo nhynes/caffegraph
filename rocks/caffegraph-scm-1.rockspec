@@ -2,7 +2,7 @@ package = "caffegraph"
 version = "scm-1"
 
 source = {
-  url = "https://github.com/nhynes/caffegraph",
+  url = "git://github.com/nhynes/caffegraph",
   tag = "master"
 }
 

@@ -19,7 +19,7 @@ brew install protobuf
 You can then install this package using
 
 ```sh
-luarocks install https://github.com/nhynes/caffegraph.git
+luarocks install caffegraph
 ```
 
 Then, similarly to [loadcaffe](https://github.com/szagoruyko/loadcaffe),
