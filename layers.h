@@ -61,6 +61,7 @@ class InputLayer: public Layer {
 LayerDef(Data);
 LayerDef(Dropout);
 LayerDef(Eltwise);
+LayerDef(Concat);
 LayerDef(ReLU);
 LayerDef(Sigmoid);
 LayerDef(Softmax);

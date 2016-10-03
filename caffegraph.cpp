@@ -1,4 +1,5 @@
 #include <TH/TH.h>
+#include <algorithm>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -22,9 +23,7 @@ using google::protobuf::io::FileInputStream;
 using google::protobuf::io::ZeroCopyInputStream;
 using google::protobuf::io::CodedInputStream;
 
-// DEBUGGING
-using std::cout;
-using std::endl;
+#define print(VAL) std::cout << VAL << std::endl; // DEBUGGING
 
 extern "C" {
   void loadModel(void** handle, const char* prototxt, const char* caffemodel);
@@ -39,7 +38,9 @@ class Model {
       int num_layers = net_params->layer_size();
       std::unordered_map<std::string, Layer*> modmap(num_layers);
 
-      for(auto& layer_params : net_params->layer()) {
+      for(int i = -1; i < num_layers-1; ++i) {
+        auto& layer_params = net_params->layer(i == -1 ? num_layers - 1 : i);
+
         if(layer_params.type() == "Split") {
           auto& bottom = layer_params.bottom(0);
           for(std::string top : layer_params.top())
@@ -47,6 +48,7 @@ class Model {
           tips.erase(layer_params.bottom(0));
           continue;
         }
+
         if(layer_params.type() == "Data")
           roots.push_back(layer_params.name());
 
@@ -76,9 +78,12 @@ class Model {
       out << "modmap = {}\n\n";
 
       for(Layer* layer : layers) {
+        auto lua_layers = layer->layer_strs();
+        if(lua_layers.size() == 0)
+          continue;
+
         std::string modmap = "modmap[#modmap+1] = {";
         std::ostringstream modmap_os;
-        auto lua_layers = layer->layer_strs();
         for(int i = 0; i < lua_layers.size(); ++i) {
           modstrs ll = lua_layers[i];
           std::ostringstream module_os;
@@ -103,13 +108,14 @@ class Model {
       out << "}, {";
       int i = 0;
       for(std::string tip : tips) {
+        std::replace(tip.begin(), tip.end(), '/', '_');
         out << tip;
         if(i < tips.size()-1) out << ", ";
         ++i;
       }
       out << "})\n\n";
 
-      out << "return model, modmap" << endl;
+      out << "return model, modmap" << std::endl;
     }
 
     void Parameterize(THFloatTensor*** tensors) {
@@ -145,11 +151,37 @@ void loadModel(void** handle, const char* prototxt, const char* caffemodel) {
   close(fd);
   if(!loaded_caffemodel) return;
 
-  bool has_layer_input = false;
-  for(auto& layer : net_params->layer())
-    has_layer_input = has_layer_input || layer.has_input_param();
+  // find and canonicalize input shape
+  bool has_input_shape = false;
+  auto* l0 = net_params->mutable_layer(0);
+  auto* canon_input_param = new caffe::InputParameter();
+  auto input_shape_ins = RepeatedFieldBackInserter(canon_input_param->mutable_shape());
+  std::string data_layer_name;
 
-  if(!has_layer_input) { // patch the prototxt input size into the caffemodel data layer
+  // check if the first layer has an input_param and, if so, remove the batch size
+  if(l0->has_input_param()) {
+    auto& ip_shape = l0->input_param().shape();
+    std::copy(ip_shape.begin()+1, ip_shape.end(), input_shape_ins);
+    data_layer_name = l0->top(0);
+    has_input_shape = true;
+  }
+
+  // otherwise, check if any of the later layers has an input_param and move it
+  // to the first layer (again, removing the batch size)
+  if(!has_input_shape) {
+    for(auto& layer : net_params->layer()) {
+      if(layer.has_input_param()) {
+        auto& ip_shape = layer.input_param().shape();
+        std::copy(ip_shape.begin()+1, ip_shape.end(), input_shape_ins);
+        data_layer_name = layer.top(0);
+        has_input_shape = true;
+        break;
+      }
+    }
+  }
+
+  // there was no input_param, so we have to check the prototxt
+  if(!has_input_shape) {
     int fd = open(prototxt, O_RDONLY);
     if(fd < 0) return;
 
@@ -161,17 +193,25 @@ void loadModel(void** handle, const char* prototxt, const char* caffemodel) {
     close(fd);
     if(!loaded_proto) return;
 
-    auto* input_param = net_params->mutable_layer(0)->mutable_input_param();
     if(proto_params->input_dim_size() > 0) {
-      auto* shape = input_param->add_shape();
-      for(int i = 1; i < proto_params->input_dim_size(); ++i)
+      auto* shape = canon_input_param->add_shape();
+      for(int i = 1; i < 4; ++i) // assume first input is data
         shape->add_dim(proto_params->input_dim(i));
     } else {
-      input_param->mutable_shape()->CopyFrom(proto_params->input_shape());
+      auto& ip_shape = proto_params->input_shape();
+      std::copy(ip_shape.begin()+1, ip_shape.end(), input_shape_ins);
     }
+    data_layer_name = proto_params->input(0);
 
     delete proto_params;
   }
+
+  // canonicalize the datalayer with the canonical input shape
+  auto* canon_data_layer = net_params->add_layer();
+  canon_data_layer->set_type("Data");
+  canon_data_layer->add_top(data_layer_name);
+  canon_data_layer->set_name(data_layer_name);
+  canon_data_layer->set_allocated_input_param(canon_input_param);
 
   Model* model = new Model(net_params);
 

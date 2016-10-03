@@ -1,4 +1,5 @@
 #include <TH/TH.h>
+#include <algorithm>
 #include <sstream>
 #include <iostream>
 #include <string>
@@ -12,12 +13,10 @@
       std::vector<Layer*> inputs)                                       \
     : Layer(params, inputs)
 
+#define print(VAL) std::cout << VAL << std::endl; // DEBUGGING
+
 using google::protobuf::Message;
 using google::protobuf::RepeatedPtrField;
-
-// DEBUGGING
-using std::cout;
-using std::endl;
 
 template <typename T>
 void RepVec(std::vector<T>& vec, int len) {
@@ -51,11 +50,13 @@ Layer* Layer::MakeLayer(const caffe::LayerParameter& params,
     return new InnerProductLayer(params, inputs);
   else if(params.type() == "Eltwise")
     return new EltwiseLayer(params, inputs);
+  else if(params.type() == "Concat")
+    return new ConcatLayer(params, inputs);
   else if(params.type() == "Scale")
     return new ScaleLayer(params, inputs);
   else if(params.type() == "ReLU")
     return new ReLULayer(params, inputs);
-  else if(params.type() == "Sigmoid")
+  else if(params.type() == "Sigmoid" || params.type() == "SigmoidCrossEntropyLoss")
     return new SigmoidLayer(params, inputs);
   else if(params.type() == "Tanh")
     return new TanhLayer(params, inputs);
@@ -72,15 +73,13 @@ Layer* Layer::MakeLayer(const caffe::LayerParameter& params,
 Layer::Layer(const caffe::LayerParameter& params, std::vector<Layer*> inputs)
    : params(params), inputs(inputs) {
   name = params.name();
+  std::replace(name.begin(), name.end(), '/', '_');
 }
 
 std::vector<modstrs> Layer::layer_strs() {
   if(lua_layers.size() == 0) {
-    std::string missing = params.type();
-    missing.append(" (");
-    missing.append(name);
-    missing.append(")");
-    lua_layers.emplace_back("-- Missing: ", missing, "");
+    lua_layers.emplace_back(name, "nn.Identity()() -- ", params.type());
+    std::cerr << "[Warning] Missing definition for: " << params.type() << std::endl;
   }
   return lua_layers;
 }
@@ -88,13 +87,11 @@ std::vector<modstrs> Layer::layer_strs() {
 void Layer::Parameterize(THFloatTensor** params) {}
 
 LayerInit(Data) {
-  if(params.has_input_param()) {
-    auto& input_param = params.input_param();
-    for(auto& shape : input_param.shape()) {
-      auto& dims = shape.dim();
-      std::vector<int> inp_dims(dims.begin(), dims.end());
-      output_sizes.push_back(inp_dims);
-    }
+  auto& input_param = params.input_param();
+  for(auto& shape : input_param.shape()) {
+    auto& dims = shape.dim();
+    std::vector<int> inp_dims(dims.begin(), dims.end());
+    output_sizes.push_back(inp_dims);
   }
   lua_layers.emplace_back(name, "nn.Identity()", "");
 }
@@ -244,6 +241,9 @@ LayerInit(InnerProduct) {
 
   int nOutputs = params.inner_product_param().num_output();
 
+  std::vector<int> output_size(1, nOutputs);
+  output_sizes.push_back(output_size);
+
   std::ostringstream module_os;
   module_os << "nn.Linear(" << nInputs << ", " << nOutputs << ")";
   lua_layers.emplace_back(name, module_os.str(), "collapse");
@@ -275,6 +275,30 @@ LayerInit(Eltwise) {
   lua_layers.emplace_back(name, module, graph_args_os.str());
 }
 
+LayerInit(Concat) {
+  int axis = params.concat_param().axis();
+  output_sizes = inputs[0]->GetOutputSizes();
+  int numInputDim = output_sizes[0].size();
+
+  std::ostringstream module_os;
+  module_os << "nn.JoinTable(" << axis << ", " << numInputDim << ")";
+
+  std::ostringstream graph_args_os;
+  graph_args_os << "{";
+  for(int i = 0; i < inputs.size(); i++) {
+    graph_args_os << inputs[i]->name;
+    if(i < inputs.size()-1)
+      graph_args_os << ", ";
+
+    if(i > 0) {
+      output_sizes[0][axis-1] += inputs[i]->GetOutputSizes()[0][axis-1];
+    }
+  }
+  graph_args_os << "}";
+
+  lua_layers.emplace_back(name, module_os.str(), graph_args_os.str());
+}
+
 LayerInit(Scale) {
   if(inputs.size() > 1)
     std::cerr << "Multi-input Scale not yet supported!" << std::endl;
@@ -284,15 +308,25 @@ LayerInit(Scale) {
   std::vector<int> input_size = inputs[0]->GetOutputSizes()[0];
   int input_dim = input_size.size();
 
+  int num_axes = scale_params.num_axes();
+  std::ostringstream cmul_os;
+  cmul_os << "nn.CMul(1, ";
+  for(int i = 0; i < input_size.size(); ++i) {
+    cmul_os << (i < num_axes ? input_size[i] : 1);
+    if(i < input_size.size()-1)
+      cmul_os << ", ";
+  }
+  cmul_os << ")";
+
   std::string input_name = inputs[0]->name;
   if(scale_params.bias_term()) {
     std::string scale_modname = name;
     scale_modname.append("_scale");
-    lua_layers.emplace_back(scale_modname, "nn.CMul()", input_name);
+    lua_layers.emplace_back(scale_modname, cmul_os.str(), input_name);
 
     lua_layers.emplace_back(name, "nn.Add(1)", scale_modname);
   } else {
-    lua_layers.emplace_back(name, "nn.CMul()", input_name);
+    lua_layers.emplace_back(name, cmul_os.str(), input_name);
   }
 }
 
@@ -332,7 +366,7 @@ void ScaleLayer::Parameterize(THFloatTensor** tensors) {
   if(scale_params.bias_term())
     THCopyAxis(params.blobs(1), tensors[3], input_size, axis);
 
-  THCopyAxis(params.blobs(0), tensors[0], input_size, axis);
+  THCopy(params.blobs(0), tensors[0]);
 }
 
 LayerInit(Softmax) {
