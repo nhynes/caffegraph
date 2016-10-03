@@ -116,10 +116,14 @@ LayerInit(Convolution) {
   } else {
     auto& ks = conv_params.kernel_size();
     k = std::vector<unsigned int>(ks.begin(), ks.end());
+
     auto& ps = conv_params.pad();
     p = std::vector<unsigned int>(ps.begin(), ps.end());
+    if(p.size() == 0) p.push_back(0);
+
     auto& ds = conv_params.stride();
     d = std::vector<unsigned int>(ds.begin(), ds.end());
+    if(d.size() == 0) d.push_back(1);
 
     int dim = weight.shape().dim_size() - 1;
     RepVec(k, dim-1);
