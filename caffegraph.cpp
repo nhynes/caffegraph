@@ -49,8 +49,12 @@ class Model {
           continue;
         }
 
-        if(layer_params.type() == "Data")
-          roots.push_back(layer_params.name());
+        if(layer_params.type() == "Data") {
+          if(i == -1)
+            roots.push_back(layer_params.name());
+          else
+            continue;
+        }
 
         int num_inputs = layer_params.bottom_size();
         std::vector<Layer*> inputs(0);
