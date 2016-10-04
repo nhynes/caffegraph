@@ -52,6 +52,8 @@ Layer* Layer::MakeLayer(const caffe::LayerParameter& params,
     return new EltwiseLayer(params, inputs);
   else if(params.type() == "Concat")
     return new ConcatLayer(params, inputs);
+  else if(params.type() == "Slice")
+    return new SliceLayer(params, inputs);
   else if(params.type() == "Scale")
     return new ScaleLayer(params, inputs);
   else if(params.type() == "ReLU")
@@ -64,10 +66,15 @@ Layer* Layer::MakeLayer(const caffe::LayerParameter& params,
     return new DropoutLayer(params, inputs);
   else if(params.type() == "Softmax" || params.type() == "SoftmaxWithLoss")
     return new SoftmaxLayer(params, inputs);
+  else if(params.type() == "EuclideanLoss")
+    return new EuclideanLossLayer(params, inputs);
   else if(params.type() == "Input")
     return new InputLayer(params, inputs);
-  else
+  else {
+    std::cerr << "[WARN] No conversion for layer: " << params.type() << std::endl;
     return new Layer(params, inputs);
+  }
+
 }
 
 Layer::Layer(const caffe::LayerParameter& params, std::vector<Layer*> inputs)
@@ -77,10 +84,8 @@ Layer::Layer(const caffe::LayerParameter& params, std::vector<Layer*> inputs)
 }
 
 std::vector<modstrs> Layer::layer_strs() {
-  if(lua_layers.size() == 0) {
+  if(lua_layers.size() == 0)
     lua_layers.emplace_back(name, "nn.Identity()() -- ", params.type());
-    std::cerr << "[Warning] Missing definition for: " << params.type() << std::endl;
-  }
   return lua_layers;
 }
 
@@ -303,6 +308,42 @@ LayerInit(Concat) {
   lua_layers.emplace_back(name, module_os.str(), graph_args_os.str());
 }
 
+LayerInit(Slice) {
+  auto& slice_param = params.slice_param();
+
+  auto& spsp = slice_param.slice_point();
+  std::vector<int> slice_points(spsp.begin(), spsp.end());
+
+  std::vector<int> input_sizes = inputs[0]->GetOutputSizes()[0];
+  output_sizes = std::vector<std::vector<int>>(params.top_size());
+
+  int axis = slice_param.axis();
+  if(axis < 0) axis += input_sizes.size();
+  int ax_size = input_sizes[axis];
+
+  if(slice_points.size() == 0) {
+    int slice_size = ax_size / params.top_size();
+    for(int i = 0; i < ax_size; i += slice_size)
+      slice_points.emplace_back(i);
+  }
+
+  int from = 1;
+  for(int i = 0; i <= slice_points.size(); ++i) {
+    int sp = i < slice_points.size() ? slice_points[i] : input_sizes[axis];
+
+    std::ostringstream module_os;
+    module_os << "nn.Narrow(" << (axis > 0 ? axis+1 : axis) << ", "
+      << from << ", " << (sp - from + 1) << ")";
+
+    lua_layers.emplace_back(params.top(i), module_os.str(), inputs[0]->name);
+
+    output_sizes[i] = std::vector<int>(input_sizes);
+    output_sizes[i][axis] = sp - from + 1;
+
+    from += sp;
+  }
+}
+
 LayerInit(Scale) {
   if(inputs.size() > 1)
     std::cerr << "Multi-input Scale not yet supported!" << std::endl;
@@ -393,6 +434,15 @@ LayerInit(Dropout) {
   std::ostringstream module_os;
   module_os << "nn.Dropout(" << params.dropout_param().dropout_ratio() << ")";
   lua_layers.emplace_back(name, module_os.str(), inputs[0]->name);
+}
+
+LayerInit(EuclideanLoss) {
+  std::string graph_args = "{";
+  graph_args.append(inputs[0]->name);
+  graph_args.append(", ");
+  graph_args.append(inputs[1]->name);
+  graph_args.append("}");
+  lua_layers.emplace_back(name, "nn.MSECriterion()", graph_args);
 }
 
 LayerInit(Input) {}

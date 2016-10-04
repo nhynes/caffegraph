@@ -62,6 +62,9 @@ class Model {
           if(modmap.count(bottom) > 0) {
             inputs.push_back(modmap[bottom]);
             tips.erase(bottom);
+          } else {
+            std::cerr << "[WARN] Missing bottom \"" << bottom << "\" for layer \" "
+              << layer_params.name() << "\"" << std::endl;
           }
         }
 
