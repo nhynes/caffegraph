@@ -49,23 +49,30 @@ class Model {
           continue;
         }
 
-        if(layer_params.type() == "Data") {
-          if(i == -1)
-            roots.push_back(layer_params.name());
-          else
+        if(layer_params.type().find("Data") != std::string::npos) {
+          if(i > -1)
             continue;
+          roots.push_back(layer_params.name());
         }
 
         int num_inputs = layer_params.bottom_size();
         std::vector<Layer*> inputs(0);
+
+        // pre-flight check for bottoms
+        bool skip_layer = false;
         for(std::string bottom : layer_params.bottom()) {
-          if(modmap.count(bottom) > 0) {
-            inputs.push_back(modmap[bottom]);
-            tips.erase(bottom);
-          } else {
-            std::cerr << "[WARN] Missing bottom \"" << bottom << "\" for layer \" "
-              << layer_params.name() << "\"" << std::endl;
-          }
+          if(modmap.count(bottom) > 0)
+            continue;
+          std::cerr << "[WARN] Missing bottom \"" << bottom << "\" for layer \""
+            << layer_params.name() << "\"" << std::endl;
+          skip_layer = true;
+        }
+        if(skip_layer)
+          continue;
+
+        for(std::string bottom : layer_params.bottom()) {
+          inputs.push_back(modmap[bottom]);
+          tips.erase(bottom);
         }
 
         Layer* layer = Layer::MakeLayer(layer_params, inputs);

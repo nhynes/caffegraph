@@ -208,6 +208,12 @@ LayerInit(Pooling) {
   output_size[0] = input_size[0];
   for(int i = 0; i < k.size(); ++i)
     output_size[i+1] = ceil((double)(input_size[i+1] + 2*p[i] - k[i]) / d[i] + 1);
+  // require that last pooling window starts in the image, not the padding
+  if(p[0] != 0 && ((output_size[1] - 1) * d[0]) >= (input_size[1] + p[0]))
+    --output_size[1];
+  if(p[1] != 0 && ((output_size[2] - 1) * d[1]) >= (input_size[2] + p[1]))
+    --output_size[2];
+
   output_sizes.push_back(output_size);
 }
 
