@@ -425,7 +425,12 @@ LayerInit(Softmax) {
 }
 
 LayerInit(ReLU) {
-  lua_layers.emplace_back(name, "nn.ReLU(true)", inputs[0]->name);
+    if(params.has_relu_param()){
+        std::ostringstream module_os;
+        module_os << "nn.LeakyReLU(" << params.relu_param().negative_slope() << ", true)";
+        lua_layers.emplace_back(name, module_os.str(), inputs[0]->name);
+    }else
+        lua_layers.emplace_back(name, "nn.ReLU(true)", inputs[0]->name);
 }
 
 LayerInit(Sigmoid) {
